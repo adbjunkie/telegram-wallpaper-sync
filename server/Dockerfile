@@ -29,6 +29,6 @@ ENV DATA_DIR=/data
 # Railway sets the $PORT env var. We default to 8080 for local/Docker testing.
 EXPOSE 8080
 
-# Use exec form (JSON) to avoid the JSONArgsRecommended warning.
-# Railway will route the correct port regardless.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Use array form + sh -c so we can expand $PORT (Railway provides this).
+# This also avoids the "JSON arguments recommended" warning.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
