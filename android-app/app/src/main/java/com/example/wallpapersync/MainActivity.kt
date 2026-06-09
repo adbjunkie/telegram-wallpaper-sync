@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -155,7 +156,9 @@ class WallpaperFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val deviceId = prefs.getString(PREF_DEVICE_ID, null) ?: return
-        registerPushToken(this, deviceId, token)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            registerPushToken(this@WallpaperFirebaseMessagingService, deviceId, token)
+        }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
@@ -202,7 +205,11 @@ class WallpaperSyncService : Service() {
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val deviceId = prefs.getString(PREF_DEVICE_ID, null)
                 if (!deviceId.isNullOrBlank()) {
-                    registerPushToken(applicationContext, deviceId)
+                    try {
+                        registerPushToken(applicationContext, deviceId)
+                    } catch (_: Exception) {
+                        // Push registration is retried on the next service loop.
+                    }
                     try {
                         applyPendingWallpapers(applicationContext, deviceId)
                     } catch (_: Exception) {
@@ -327,6 +334,7 @@ fun WallpaperSyncScreen() {
     var isLoading by remember { mutableStateOf(false) }
     var pendingItems by remember { mutableStateOf<List<PendingItem>>(emptyList()) }
     var lastMessage by remember { mutableStateOf<String?>(null) }
+    var pushMessage by remember { mutableStateOf<String?>(null) }
     var showHistory by remember { mutableStateOf(false) }
 
     // Load or create device ID on first composition
@@ -341,7 +349,11 @@ fun WallpaperSyncScreen() {
             existing
         }
         deviceId = activeDeviceId
-        registerPushToken(context, activeDeviceId)
+        pushMessage = try {
+            registerPushToken(context, activeDeviceId)
+        } catch (e: Exception) {
+            "Push registration failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+        }
         scheduleAutoWallpaperSync(context)
         startWallpaperSyncService(context)
     }
@@ -435,6 +447,18 @@ fun WallpaperSyncScreen() {
             context.startActivity(intent)
         } catch (e: Exception) {
             showToast("Could not open Telegram. Is it installed?")
+        }
+    }
+
+    fun registerPushNow() {
+        val id = deviceId ?: return
+        scope.launch {
+            pushMessage = "Registering push..."
+            pushMessage = try {
+                registerPushToken(context, id)
+            } catch (e: Exception) {
+                "Push registration failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+            }
         }
     }
 
@@ -534,6 +558,25 @@ fun WallpaperSyncScreen() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(Modifier.height(8.dp))
+
+                pushMessage?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                OutlinedButton(
+                    onClick = { registerPushNow() },
+                    enabled = deviceId != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Register push")
+                }
 
                 Spacer(Modifier.height(8.dp))
 
@@ -768,34 +811,19 @@ fun startWallpaperSyncService(context: Context) {
     }
 }
 
-fun registerPushToken(context: Context, deviceId: String, knownToken: String? = null) {
-    fun sendToken(token: String) {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                ApiClient.api.registerPush(
-                    RegisterPushRequest(
-                        deviceId = deviceId,
-                        fcmToken = token
-                    )
-                )
-            } catch (_: Exception) {
-                scheduleAutoWallpaperSync(context.applicationContext)
-            }
+suspend fun registerPushToken(context: Context, deviceId: String, knownToken: String? = null): String =
+    withContext(Dispatchers.IO) {
+        val token = knownToken ?: Tasks.await(FirebaseMessaging.getInstance().token)
+        if (token.isNullOrBlank()) {
+            throw IOException("Firebase returned an empty token")
         }
-    }
 
-    if (!knownToken.isNullOrBlank()) {
-        sendToken(knownToken)
-        return
-    }
+        ApiClient.api.registerPush(
+            RegisterPushRequest(
+                deviceId = deviceId,
+                fcmToken = token
+            )
+        )
 
-    FirebaseMessaging.getInstance().token
-        .addOnSuccessListener { token ->
-            if (!token.isNullOrBlank()) {
-                sendToken(token)
-            }
-        }
-        .addOnFailureListener {
-            scheduleAutoWallpaperSync(context.applicationContext)
-        }
-}
+        "Push registered: ${token.take(8)}..."
+    }
