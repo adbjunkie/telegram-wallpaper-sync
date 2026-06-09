@@ -23,6 +23,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -374,11 +375,14 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Download the file
     try:
         file = await context.bot.get_file(file_id)
-        # file.file_path is something like 'photos/file_123.jpg'
+        # Depending on python-telegram-bot version, file_path may be either
+        # 'photos/file_123.jpg' or a full Telegram file URL.
 
         # Create a nice local filename
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        ext = Path(file.file_path).suffix or ".jpg"
+        file_path = file.file_path or ""
+        parsed_file_path = urlparse(file_path)
+        ext = Path(parsed_file_path.path).suffix or ".jpg"
         filename = f"{timestamp}_{chat.id}_{file_id[-8:]}{ext}"
         dest_path = IMAGES_DIR / filename
 
@@ -386,7 +390,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # PTB's download_to_drive also works:
         # await file.download_to_drive(custom_path=str(dest_path))
         async with httpx.AsyncClient(timeout=60) as client:
-            url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+            if file_path.startswith(("http://", "https://")):
+                url = file_path
+            else:
+                url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
             resp = await client.get(url)
             resp.raise_for_status()
             dest_path.write_bytes(resp.content)
