@@ -64,6 +64,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.google.firebase.messaging.FirebaseMessaging
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
@@ -120,6 +123,11 @@ data class ApplyResponse(
     @SerializedName("already_applied") val alreadyApplied: Boolean? = null
 )
 
+data class RegisterPushRequest(
+    @SerializedName("device_id") val deviceId: String,
+    @SerializedName("fcm_token") val fcmToken: String
+)
+
 const val PREFS_NAME = "wallpaper_sync"
 const val PREF_DEVICE_ID = "device_id"
 const val AUTO_SYNC_WORK_NAME = "auto_wallpaper_sync"
@@ -136,8 +144,32 @@ interface WallpaperApi {
     @POST("apply")
     suspend fun apply(@Body request: ApplyRequest): ApplyResponse
 
+    @POST("register_push")
+    suspend fun registerPush(@Body request: RegisterPushRequest): Map<String, Any>
+
     @GET("history")
     suspend fun getHistory(@Query("device_id") deviceId: String, @Query("limit") limit: Int = 10): Map<String, Any>
+}
+
+class WallpaperFirebaseMessagingService : FirebaseMessagingService() {
+    override fun onNewToken(token: String) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val deviceId = prefs.getString(PREF_DEVICE_ID, null) ?: return
+        registerPushToken(this, deviceId, token)
+    }
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val deviceId = message.data["device_id"] ?: prefs.getString(PREF_DEVICE_ID, null) ?: return
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                applyPendingWallpapers(applicationContext, deviceId)
+            } catch (_: Exception) {
+                scheduleAutoWallpaperSync(applicationContext)
+                startWallpaperSyncService(applicationContext)
+            }
+        }
+    }
 }
 
 class AutoWallpaperWorker(
@@ -308,6 +340,7 @@ fun WallpaperSyncScreen() {
             existing
         }
         deviceId = activeDeviceId
+        registerPushToken(context, activeDeviceId)
         scheduleAutoWallpaperSync(context)
         startWallpaperSyncService(context)
     }
@@ -732,4 +765,33 @@ fun startWallpaperSyncService(context: Context) {
     } else {
         context.startService(intent)
     }
+}
+
+fun registerPushToken(context: Context, deviceId: String, knownToken: String? = null) {
+    fun sendToken(token: String) {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                ApiClient.api.registerPush(
+                    RegisterPushRequest(
+                        deviceId = deviceId,
+                        fcmToken = token
+                    )
+                )
+            } catch (_: Exception) {
+                scheduleAutoWallpaperSync(context.applicationContext)
+            }
+        }
+    }
+
+    if (!knownToken.isNullOrBlank()) {
+        sendToken(knownToken)
+        return
+    }
+
+    FirebaseMessaging.getInstance().token
+        .addOnSuccessListener { token ->
+            if (!token.isNullOrBlank()) {
+                sendToken(token)
+            }
+        }
 }

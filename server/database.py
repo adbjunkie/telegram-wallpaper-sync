@@ -81,6 +81,13 @@ def init_db():
                 chat_id INTEGER
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS device_push_tokens (
+                device_id TEXT PRIMARY KEY,
+                fcm_token TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
 
 @contextmanager
@@ -206,3 +213,23 @@ def get_chat_id_for_pending(pending_id: int) -> Optional[int]:
             "SELECT chat_id FROM pending_wallpapers WHERE id = ?", (pending_id,)
         ).fetchone()
         return row["chat_id"] if row else None
+
+def set_push_token(device_id: str, fcm_token: str) -> bool:
+    with get_conn() as conn:
+        conn.execute("""
+            INSERT INTO device_push_tokens (device_id, fcm_token, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(device_id) DO UPDATE SET
+                fcm_token = excluded.fcm_token,
+                updated_at = CURRENT_TIMESTAMP
+        """, (device_id, fcm_token))
+        conn.commit()
+    return True
+
+def get_push_token(device_id: str) -> Optional[str]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT fcm_token FROM device_push_tokens WHERE device_id = ?",
+            (device_id,)
+        ).fetchone()
+        return row["fcm_token"] if row else None

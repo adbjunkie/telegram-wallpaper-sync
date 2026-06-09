@@ -21,6 +21,7 @@ Important env vars (set these in Railway dashboard or .env):
 import os
 import asyncio
 import logging
+import json
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,6 +29,8 @@ from typing import Optional
 from contextlib import asynccontextmanager
 
 import httpx
+import firebase_admin
+from firebase_admin import credentials, messaging
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +49,8 @@ from database import (
     mark_wallpaper_applied,
     get_history_for_device,
     get_chat_id_for_pending,
+    set_push_token,
+    get_push_token,
     IMAGES_DIR,
     DATA_DIR,
     DB_PATH,
@@ -60,6 +65,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+FIREBASE_SERVICE_ACCOUNT_JSON = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
 # PUBLIC_BASE_URL is critical for both image links the Android app downloads
 # and for setting the Telegram webhook.
@@ -94,6 +100,53 @@ Path(IMAGES_DIR).mkdir(parents=True, exist_ok=True)
 ptb_app: Optional[Application] = None
 _use_webhook = False
 _webhook_path = "/webhook"
+_firebase_ready = False
+
+
+def init_firebase():
+    global _firebase_ready
+    if _firebase_ready:
+        return True
+    if firebase_admin._apps:
+        _firebase_ready = True
+        return True
+    if not FIREBASE_SERVICE_ACCOUNT_JSON:
+        logger.info("FIREBASE_SERVICE_ACCOUNT_JSON not set; FCM push delivery is disabled")
+        return False
+
+    try:
+        service_account = json.loads(FIREBASE_SERVICE_ACCOUNT_JSON)
+        firebase_admin.initialize_app(credentials.Certificate(service_account))
+        _firebase_ready = True
+        logger.info("Firebase Admin initialized")
+        return True
+    except Exception as e:
+        logger.exception(f"Failed to initialize Firebase Admin: {e}")
+        return False
+
+
+async def send_wallpaper_push(device_id: str, pending_id: int):
+    token = get_push_token(device_id)
+    if not token:
+        logger.info(f"No FCM token registered for device {device_id}; skipping push")
+        return
+    if not init_firebase():
+        return
+
+    try:
+        message = messaging.Message(
+            token=token,
+            data={
+                "type": "wallpaper_pending",
+                "device_id": device_id,
+                "pending_id": str(pending_id),
+            },
+            android=messaging.AndroidConfig(priority="high"),
+        )
+        message_id = await asyncio.to_thread(messaging.send, message)
+        logger.info(f"Sent FCM wallpaper push to device {device_id}: {message_id}")
+    except Exception as e:
+        logger.warning(f"Failed to send FCM push to device {device_id}: {e}")
 
 
 # --------------------------- Pydantic models ---------------------------
@@ -104,12 +157,18 @@ class ApplyRequest(BaseModel):
     screen: str = "both"   # "home", "lock", or "both"
 
 
+class RegisterPushRequest(BaseModel):
+    device_id: str
+    fcm_token: str
+
+
 # --------------------------- FastAPI app ---------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ptb_app, _use_webhook
     init_db()
+    init_firebase()
     logger.info(f"Database initialized (DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}, DATA_DIR={DATA_DIR})")
 
     ptb_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -288,6 +347,17 @@ async def apply_wallpaper(req: ApplyRequest):
     return {"ok": True, "pending_id": req.pending_id, "screen": req.screen}
 
 
+@app.post("/register_push")
+async def register_push(req: RegisterPushRequest):
+    if not req.device_id or len(req.device_id) < 8:
+        raise HTTPException(status_code=400, detail="Invalid device_id")
+    if not req.fcm_token or len(req.fcm_token) < 20:
+        raise HTTPException(status_code=400, detail="Invalid fcm_token")
+
+    set_push_token(req.device_id, req.fcm_token)
+    return {"ok": True, "device_id": req.device_id}
+
+
 @app.get("/history")
 async def get_history(device_id: str = Query(...), limit: int = 20):
     items = get_history_for_device(device_id, limit=limit)
@@ -404,6 +474,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         logger.info(f"Received photo for device {device_id} (pending #{pending_id}, file {filename})")
+        await send_wallpaper_push(device_id, pending_id)
 
         await message.reply_text(
             f"📸 Photo received!\n"
