@@ -1,17 +1,100 @@
-// Add these lines to your app/build.gradle.kts (inside the dependencies { } block)
-// Also make sure you have the Compose BOM and Kotlin compiler plugin set up (the Empty Activity template usually does this).
+// This is a COMPLETE ready-to-use build.gradle.kts for the app module.
+//
+// INSTRUCTIONS:
+// 1. In Android Studio, open your project's app/build.gradle.kts
+// 2. Delete everything in it
+// 3. Paste the entire content of this file
+// 4. Change the namespace and applicationId if you used a different package when creating the project
+// 5. Click "Sync Now" or File > Sync Project with Gradle Files
+// 6. If errors persist: Build > Clean Project, then Build > Rebuild Project, then sync again
 
-dependencies {
-    // === Wallpaper Sync additions ===
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.retrofit2:retrofit:2.11.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    plugins {
+        id("com.android.application")
+        id("org.jetbrains.kotlin.android")
+        // This plugin is required for modern Compose (Kotlin 2.0+)
+        id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
+    }
 
-    implementation("io.coil-kt:coil-compose:2.7.0")
+    android {
+        // IMPORTANT: Change this to match the package you chose when creating the project
+        // (and the package in MainActivity.kt)
+        namespace = "com.example.wallpapersync"
+        compileSdk = 34
 
-    // Coroutines (usually already present)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+        defaultConfig {
+            // Change this too if you used a different package
+            applicationId = "com.example.wallpapersync"
+            minSdk = 26
+            targetSdk = 34
+            versionCode = 1
+            versionName = "1.0"
 
-    // If you want modern DataStore instead of SharedPreferences later:
-    // implementation("androidx.datastore:datastore-preferences:1.1.1")
-}
+            testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+            vectorDrawables {
+                useSupportLibrary = true
+            }
+        }
+
+        buildTypes {
+            release {
+                isMinifyEnabled = false
+                proguardFiles(
+                        getDefaultProguardFile("proguard-android-optimize.txt"),
+                        "proguard-rules.pro"
+                )
+            }
+        }
+
+        compileOptions {
+            sourceCompatibility = JavaVersion.VERSION_1_8
+            targetCompatibility = JavaVersion.VERSION_1_8
+        }
+
+        kotlinOptions {
+            jvmTarget = "1.8"
+        }
+
+        buildFeatures {
+            compose = true
+        }
+
+        packaging {
+            resources {
+                excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            }
+        }
+    }
+
+    dependencies {
+        // Compose BOM - manages versions of Compose libraries
+        implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+
+        // Core Compose
+        implementation("androidx.compose.ui:ui")
+        implementation("androidx.compose.ui:ui-tooling-preview")
+        implementation("androidx.compose.material3:material3")
+
+        // Activity + Lifecycle for Compose
+        implementation("androidx.activity:activity-compose:1.9.2")
+        implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+        implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+
+        // === Wallpaper Sync specific dependencies ===
+        // Networking
+        implementation("com.squareup.okhttp3:okhttp:4.12.0")
+        implementation("com.squareup.retrofit2:retrofit:2.11.0")
+        implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+
+        // Image loading
+        implementation("io.coil-kt:coil-compose:2.7.0")
+
+        // Coroutines (for withContext(Dispatchers.IO) etc.)
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+        // Explicit Kotlin stdlib - helps with "Cannot access built-in declaration 'kotlin.XXX'" errors
+        implementation("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
+
+        // Debug
+        debugImplementation("androidx.compose.ui:ui-tooling")
+        debugImplementation("androidx.compose.ui:ui-test-manifest")
+    }

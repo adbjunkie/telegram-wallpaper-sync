@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Use a framework theme that is guaranteed to exist. 
+         For Compose apps we don't need MaterialComponents XML theme. -->
+    <style name="Theme.WallpaperSync" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

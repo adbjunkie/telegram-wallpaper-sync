@@ -12,7 +12,7 @@ This project is built to be deployed on **Railway** from **GitHub** (webhook + p
 
 1. Push this folder to a GitHub repo.
 2. In Railway: New Project → Deploy from GitHub → select repo.
-3. **Set Root Directory to `server`** (this is critical — it changes the build context so the Dockerfile works).
+3. **Set Root Directory to `server`** (this is critical — it changes the build context so the Dockerfile works). See the updated `server/README.md` for the PORT fix and required variables.
 4. Add these Variables:
    - `TELEGRAM_BOT_TOKEN` = (from @BotFather)
    - `PUBLIC_BASE_URL` = `https://your-app.up.railway.app` (Railway gives you this)
