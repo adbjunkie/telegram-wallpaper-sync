@@ -1,0 +1,17 @@
+// Add these lines to your app/build.gradle.kts (inside the dependencies { } block)
+// Also make sure you have the Compose BOM and Kotlin compiler plugin set up (the Empty Activity template usually does this).
+
+dependencies {
+    // === Wallpaper Sync additions ===
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+
+    implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Coroutines (usually already present)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // If you want modern DataStore instead of SharedPreferences later:
+    // implementation("androidx.datastore:datastore-preferences:1.1.1")
+}
