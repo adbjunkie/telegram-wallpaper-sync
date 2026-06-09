@@ -19,7 +19,7 @@ git push -u origin main
 After push:
 - Go to Railway
 - Deploy from that GitHub repo
-- **Set Root Directory to `server`**
+- Keep **Root Directory** at the repository root
 - Add the two variables + Volume as described in QUICKSTART.md
 
 That's the entire flow. No local server, no ngrok.

@@ -71,7 +71,7 @@ const val BOT_USERNAME = "tgpaperbot"   // <--- CHANGE ME
  * - Same WiFi: "http://192.168.1.42:8000"
  * - Emulator talking to host: "http://10.0.2.2:8000"
  */
-const val BASE_URL = "telegram-wallpaper-sync-production.up.railway.app"   // <--- CHANGE ME
+const val BASE_URL = "https://telegram-wallpaper-sync-production.up.railway.app"   // <--- CHANGE ME
 
 // ============================================================
 
@@ -119,11 +119,21 @@ object ApiClient {
 
     val api: WallpaperApi by lazy {
         Retrofit.Builder()
-            .baseUrl(if (BASE_URL.endsWith("/")) BASE_URL else "$BASE_URL/")
+            .baseUrl(normalizedBaseUrl(BASE_URL))
             .client(okHttp)
             .addConverterFactory(GsonConverterFactory.create(Gson()))
             .build()
             .create(WallpaperApi::class.java)
+    }
+
+    private fun normalizedBaseUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim().trimEnd('/')
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+        return "$withScheme/"
     }
 }
 

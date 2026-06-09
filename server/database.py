@@ -1,20 +1,21 @@
 import sqlite3
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
 # Railway-friendly configuration.
 # Set DATA_DIR=/data (and attach a Railway Volume at /data) for persistence across deploys/restarts.
-DATA_DIR = os.getenv("DATA_DIR", "data")
-DB_PATH = os.getenv("DB_PATH") or os.path.join(DATA_DIR, "wallpaper_sync.db")
-IMAGES_DIR = os.getenv("IMAGES_DIR") or os.path.join(DATA_DIR, "received_images")
+DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
+DB_PATH = Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else DATA_DIR / "wallpaper_sync.db"
+IMAGES_DIR = Path(os.getenv("IMAGES_DIR")) if os.getenv("IMAGES_DIR") else DATA_DIR / "received_images"
 
 def init_db():
     print(f"[DB] Initializing with DATA_DIR={DATA_DIR}, DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}")
-    db_dir = os.path.dirname(DB_PATH) or "."
-    os.makedirs(db_dir, exist_ok=True)
-    os.makedirs(IMAGES_DIR, exist_ok=True)
+    db_dir = DB_PATH.parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     # Ensure writable for volume mounts (e.g. Railway). Ignore if not permitted.
     try:
         os.chmod(db_dir, 0o777)
@@ -22,9 +23,9 @@ def init_db():
     except PermissionError:
         pass
     # Explicitly create the DB file if it doesn't exist to ensure the volume is writable
-    if not os.path.exists(DB_PATH):
+    if not DB_PATH.exists():
         try:
-            with open(DB_PATH, 'w') as f:
+            with DB_PATH.open('w') as f:
                 f.write('')
             print(f"[DB] Pre-created DB file at {DB_PATH}")
         except Exception as e:
@@ -66,7 +67,7 @@ def init_db():
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

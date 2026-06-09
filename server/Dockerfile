@@ -1,8 +1,7 @@
 # Railway Dockerfile for Telegram Wallpaper Sync
 #
-# IMPORTANT: In Railway, when deploying this repo, set the service's
-# "Root Directory" to `server`. This makes the build context the server/ folder,
-# so all COPY commands below work simply.
+# This Dockerfile is referenced from the repo-root railway.json as
+# server/Dockerfile, so COPY paths are relative to the repository root.
 
 FROM python:3.11-slim
 
@@ -14,11 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (better caching)
-COPY requirements.txt .
+COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the server code
-COPY . .
+COPY server/ .
 
 # Prepare persistent data dir (attach a Railway Volume at /data)
 RUN mkdir -p /data

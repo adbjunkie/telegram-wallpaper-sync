@@ -62,16 +62,24 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # PUBLIC_BASE_URL is critical for both image links the Android app downloads
 # and for setting the Telegram webhook.
-PUBLIC_BASE_URL = (
+def normalize_public_base_url(raw_url: str) -> str:
+    """Return an absolute base URL suitable for webhooks and image links."""
+    url = raw_url.strip().rstrip("/")
+    if not url:
+        return "http://localhost:8000"
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    if url.startswith("http://") and "localhost" not in url and "127.0.0.1" not in url:
+        url = url.replace("http://", "https://", 1)
+    return url
+
+
+PUBLIC_BASE_URL = normalize_public_base_url(
     os.getenv("PUBLIC_BASE_URL")
-    or os.getenv("RAILWAY_PUBLIC_DOMAIN")  # Railway injects this in some contexts
+    or os.getenv("RAILWAY_PUBLIC_DOMAIN")  # Often just the domain, with no scheme.
     or os.getenv("RAILWAY_STATIC_URL")
     or "http://localhost:8000"
-).rstrip("/")
-
-# Ensure https for production (Railway domains are https)
-if PUBLIC_BASE_URL.startswith("http://") and "localhost" not in PUBLIC_BASE_URL and "127.0.0.1" not in PUBLIC_BASE_URL:
-    PUBLIC_BASE_URL = PUBLIC_BASE_URL.replace("http://", "https://", 1)
+)
 
 PORT = int(os.getenv("PORT", "8000"))
 
@@ -103,14 +111,7 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info(f"Database initialized (DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}, DATA_DIR={DATA_DIR})")
 
-    # Build PTB application **without** the built-in updater.
-    # We will either run polling manually or use webhooks via FastAPI.
-    ptb_app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .updater(None)   # Important for webhook or custom polling
-        .build()
-    )
+    ptb_app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     # Register handlers
     ptb_app.add_handler(CommandHandler("start", start_command))
@@ -172,6 +173,8 @@ async def run_polling():
     if ptb_app and ptb_app.updater:
         await ptb_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Bot polling task started")
+    else:
+        logger.error("Cannot start polling because the Telegram updater is unavailable")
 
 
 app = FastAPI(title="Telegram Wallpaper Sync", lifespan=lifespan)

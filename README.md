@@ -12,7 +12,7 @@ This project is built to be deployed on **Railway** from **GitHub** (webhook + p
 
 1. Push this folder to a GitHub repo.
 2. In Railway: New Project → Deploy from GitHub → select repo.
-3. **Set Root Directory to `server`** (this is critical — it changes the build context so the Dockerfile works). See the updated `server/README.md` for the PORT fix and required variables.
+3. Keep the Railway service root at the repository root. The included `railway.json` points Railway at `server/Dockerfile`.
 4. Add these Variables:
    - `TELEGRAM_BOT_TOKEN` = (from @BotFather)
    - `PUBLIC_BASE_URL` = `https://your-app.up.railway.app` (Railway gives you this)
@@ -224,9 +224,9 @@ git push -u origin main
 1. Go to [railway.app](https://railway.app) and log in (GitHub login is easiest).
 2. **New Project** → **Deploy from GitHub repo**.
 3. Select your new repo.
-4. Railway should detect the `railway.json` + Dockerfile in the server folder.
+4. Railway should detect `railway.json`, which points at `server/Dockerfile`.
 
-   - If it asks for **Root Directory**, you can set it to `server` (simpler), **or** leave it at root and let the `railway.json` point to `server/Dockerfile`.
+   - If it asks for **Root Directory**, leave it as the repository root.
 5. Once the service is created:
    - Go to the service → **Variables** tab:
      - Add `TELEGRAM_BOT_TOKEN` = (your bot token from BotFather)

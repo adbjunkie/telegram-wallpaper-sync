@@ -119,11 +119,21 @@ object ApiClient {
 
     val api: WallpaperApi by lazy {
         Retrofit.Builder()
-            .baseUrl(if (BASE_URL.endsWith("/")) BASE_URL else "$BASE_URL/")
+            .baseUrl(normalizedBaseUrl(BASE_URL))
             .client(okHttp)
             .addConverterFactory(GsonConverterFactory.create(Gson()))
             .build()
             .create(WallpaperApi::class.java)
+    }
+
+    private fun normalizedBaseUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim().trimEnd('/')
+        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+        return "$withScheme/"
     }
 }
 

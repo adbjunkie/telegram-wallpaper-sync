@@ -26,7 +26,7 @@ The server was failing to start with:
 - Attach a Volume mounted at `/data` (so the SQLite DB and received images survive restarts).
 
 ## Root Directory
-- When connecting the GitHub repo in Railway, set **Root Directory = `server`**.
+- When connecting the GitHub repo in Railway, keep **Root Directory** at the repository root. The repo-level `railway.json` points at `server/Dockerfile`.
 
 Once the server is running and the webhook is set, the Telegram bot will respond to messages (including photos for wallpapers).
 

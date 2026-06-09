@@ -21,7 +21,7 @@ git push -u origin main
 ## 3. Deploy on Railway
 1. Go to Railway → New Project → Deploy from GitHub repo.
 2. Select this repo.
-3. **Critical**: Set the service **Root Directory to `server`** (in the service configuration / settings when creating or editing the deployment). This ensures the Dockerfile and COPY instructions see the correct files.
+3. Keep the service **Root Directory** at the repository root. The included `railway.json` points Railway at `server/Dockerfile`.
 4. Variables:
    - `TELEGRAM_BOT_TOKEN` = your bot token
    - `PUBLIC_BASE_URL` = `https://your-service.up.railway.app` (Railway shows this after the first deploy)
