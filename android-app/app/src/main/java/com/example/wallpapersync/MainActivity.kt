@@ -64,6 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
@@ -79,6 +81,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -137,6 +140,8 @@ const val AUTO_SYNC_NOW_WORK_NAME = "auto_wallpaper_sync_now"
 const val FOREGROUND_SYNC_CHANNEL_ID = "wallpaper_sync_foreground"
 const val FOREGROUND_SYNC_NOTIFICATION_ID = 1001
 const val FOREGROUND_SYNC_INTERVAL_MS = 15_000L
+const val FCM_TOKEN_TIMEOUT_MS = 60_000L
+const val PUSH_REGISTER_TIMEOUT_MS = 30_000L
 
 // Minimal Retrofit service
 interface WallpaperApi {
@@ -815,21 +820,35 @@ fun startWallpaperSyncService(context: Context) {
 
 suspend fun registerPushToken(context: Context, deviceId: String, knownToken: String? = null): String =
     withContext(Dispatchers.IO) {
+        val playServicesStatus = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context)
+        if (playServicesStatus != ConnectionResult.SUCCESS) {
+            val statusText = GoogleApiAvailability.getInstance().getErrorString(playServicesStatus)
+            throw IOException("Google Play Services unavailable: $statusText")
+        }
+
         FirebaseMessaging.getInstance().isAutoInitEnabled = true
-        val token = knownToken ?: withTimeout(15_000L) {
-            Tasks.await(FirebaseMessaging.getInstance().token)
+        val token = knownToken ?: try {
+            withTimeout(FCM_TOKEN_TIMEOUT_MS) {
+                Tasks.await(FirebaseMessaging.getInstance().token)
+            }
+        } catch (_: TimeoutCancellationException) {
+            throw IOException("Timed out fetching Firebase token. Check Google Play Services, network, and device date/time.")
         }
         if (token.isNullOrBlank()) {
             throw IOException("Firebase returned an empty token")
         }
 
-        withTimeout(15_000L) {
-            ApiClient.api.registerPush(
-                RegisterPushRequest(
-                    deviceId = deviceId,
-                    fcmToken = token
+        try {
+            withTimeout(PUSH_REGISTER_TIMEOUT_MS) {
+                ApiClient.api.registerPush(
+                    RegisterPushRequest(
+                        deviceId = deviceId,
+                        fcmToken = token
+                    )
                 )
-            )
+            }
+        } catch (_: TimeoutCancellationException) {
+            throw IOException("Timed out registering token with Railway")
         }
 
         "Push registered: ${token.take(8)}..."

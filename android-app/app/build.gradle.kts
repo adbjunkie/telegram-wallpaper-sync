@@ -64,6 +64,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging-ktx")
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 
     // Networking for the Telegram sync
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
