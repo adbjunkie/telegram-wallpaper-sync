@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "839810779565",
-    "project_id": "telepaper-b5e6a",
-    "storage_bucket": "telepaper-b5e6a.firebasestorage.app"
+    "project_number": "YOUR_FIREBASE_PROJECT_NUMBER",
+    "project_id": "YOUR_FIREBASE_PROJECT_ID",
+    "storage_bucket": "YOUR_FIREBASE_PROJECT_ID.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:839810779565:android:ad2f980c2846e7a8f2b924",
+        "mobilesdk_app_id": "YOUR_ANDROID_MOBILE_SDK_APP_ID",
         "android_client_info": {
           "package_name": "com.example.wallpapersync"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAM0TKFHMrMwSa1An2XJ1IYZnGdF0U0uKc"
+          "current_key": "YOUR_FIREBASE_WEB_API_KEY"
         }
       ],
       "services": {

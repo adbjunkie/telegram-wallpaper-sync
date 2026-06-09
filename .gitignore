@@ -43,6 +43,7 @@ captures/
 *.apk
 *.aab
 *.ap_
+google-services.json
 
 # Misc
 *.log
