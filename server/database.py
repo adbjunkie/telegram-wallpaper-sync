@@ -12,14 +12,23 @@ IMAGES_DIR = os.getenv("IMAGES_DIR") or os.path.join(DATA_DIR, "received_images"
 
 def init_db():
     print(f"[DB] Initializing with DATA_DIR={DATA_DIR}, DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}")
-    os.makedirs(DATA_DIR, exist_ok=True)
+    db_dir = os.path.dirname(DB_PATH) or "."
+    os.makedirs(db_dir, exist_ok=True)
     os.makedirs(IMAGES_DIR, exist_ok=True)
     # Ensure writable for volume mounts (e.g. Railway). Ignore if not permitted.
     try:
-        os.chmod(DATA_DIR, 0o777)
+        os.chmod(db_dir, 0o777)
         os.chmod(IMAGES_DIR, 0o777)
     except PermissionError:
         pass
+    # Explicitly create the DB file if it doesn't exist to ensure the volume is writable
+    if not os.path.exists(DB_PATH):
+        try:
+            with open(DB_PATH, 'w') as f:
+                f.write('')
+            print(f"[DB] Pre-created DB file at {DB_PATH}")
+        except Exception as e:
+            print(f"[DB] Failed to pre-create DB file {DB_PATH}: {e}")
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS links (
