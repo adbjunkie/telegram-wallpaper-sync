@@ -306,11 +306,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text(
             "Hi! I'm the Wallpaper Sync bot.\n\n"
-            "To connect me to your Android app:\n"
-            "1. Open the Wallpaper Sync app on your phone\n"
-            "2. Tap 'Connect to Telegram'\n"
-            "3. Send me the link (or tap it)\n\n"
-            "Once connected, just send me photos and they can become your phone's wallpaper."
+            "Ask the phone owner for their share link. Once you open it, any photo you send here will be pushed to that phone's wallpaper automatically."
         )
         return
 
@@ -325,10 +321,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link_device_to_chat(device_id, chat.id, username=username, first_name=first_name)
 
     await update.message.reply_text(
-        f"✅ Connected!\n\n"
-        f"Your Telegram chat is now linked to device <code>{device_id}</code>.\n\n"
-        "Send me any photo (as a normal message) and I'll make it available for your Android app to set as wallpaper.\n\n"
-        "Tip: You can also forward photos here from other chats."
+        f"✅ Connected to this wallpaper link.\n\n"
+        f"Target device: <code>{device_id}</code>\n\n"
+        "Send or forward any photo here and it will be queued for that phone to apply automatically."
     )
     logger.info(f"Linked device {device_id} <-> chat {chat.id} (@{username})")
 
@@ -336,10 +331,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Wallpaper Sync Bot\n\n"
-        "• Send me a photo → it becomes available in your Android app\n"
-        "• The app can set it as your home or lock screen wallpaper\n"
-        "• After the app applies it, I'll send you a confirmation here\n\n"
-        "Generate the connect link from inside the Android app."
+        "• Open a phone owner's share link once\n"
+        "• Send me a photo any time\n"
+        "• The phone app auto-syncs and applies it as wallpaper\n"
+        "• I send a confirmation after the phone applies it"
     )
 
 
@@ -347,9 +342,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     device_id = get_device_for_chat(chat_id)
     if device_id:
-        await update.message.reply_text(f"✅ You are connected.\nDevice ID: <code>{device_id}</code>")
+        await update.message.reply_text(f"✅ You can send wallpapers to:\n<code>{device_id}</code>")
     else:
-        await update.message.reply_text("Not connected yet. Generate a link from the Android app and send it here.")
+        await update.message.reply_text("Not connected yet. Ask the phone owner for their wallpaper share link.")
 
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,8 +355,8 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     device_id = get_device_for_chat(chat.id)
     if not device_id:
         await message.reply_text(
-            "You're not connected to any Android device yet.\n"
-            "Open the Wallpaper Sync app on your phone, generate a connect link, and send it to me first."
+            "You're not connected to any phone yet.\n"
+            "Ask the phone owner for their wallpaper share link, open it once, then send photos here."
         )
         return
 
@@ -409,7 +404,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await message.reply_text(
             f"📸 Photo received!\n"
-            f"Open the Wallpaper Sync app on your phone and tap 'Sync' to see it.\n"
+            f"The phone will auto-sync and apply it as wallpaper.\n"
             f"(Pending ID: {pending_id})"
         )
 
@@ -420,7 +415,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def text_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Send me a photo to make it available as a wallpaper for your connected Android device.\n"
+        "Send me a photo to push it to the connected phone's wallpaper.\n"
         "Use /help for more info."
     )
 

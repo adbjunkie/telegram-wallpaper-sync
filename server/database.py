@@ -45,6 +45,20 @@ def init_db():
             )
         """)
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS device_chat_links (
+                chat_id INTEGER NOT NULL,
+                device_id TEXT NOT NULL,
+                username TEXT,
+                first_name TEXT,
+                linked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chat_id, device_id)
+            )
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO device_chat_links (chat_id, device_id, username, first_name, linked_at)
+            SELECT chat_id, device_id, username, first_name, linked_at FROM links
+        """)
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS pending_wallpapers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 device_id TEXT NOT NULL,
@@ -79,30 +93,46 @@ def get_conn():
         conn.close()
 
 def link_device_to_chat(device_id: str, chat_id: int, username: Optional[str] = None, first_name: Optional[str] = None) -> bool:
-    """Link (or re-link) a device to a Telegram chat. Returns True if newly created or updated."""
+    """Allow this Telegram chat to send wallpapers to the shared device link."""
     with get_conn() as conn:
-        # Upsert style
         conn.execute("""
-            INSERT INTO links (device_id, chat_id, username, first_name, linked_at)
+            INSERT INTO device_chat_links (chat_id, device_id, username, first_name, linked_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(device_id) DO UPDATE SET
-                chat_id = excluded.chat_id,
+            ON CONFLICT(chat_id, device_id) DO UPDATE SET
                 username = excluded.username,
                 first_name = excluded.first_name,
                 linked_at = CURRENT_TIMESTAMP
-        """, (device_id, chat_id, username, first_name))
+        """, (chat_id, device_id, username, first_name))
         conn.commit()
     return True
 
 def get_chat_for_device(device_id: str) -> Optional[int]:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT chat_id FROM links WHERE device_id = ?", (device_id,)
+            """
+            SELECT chat_id FROM device_chat_links
+            WHERE device_id = ?
+            ORDER BY linked_at DESC
+            LIMIT 1
+            """,
+            (device_id,)
         ).fetchone()
         return row["chat_id"] if row else None
 
 def get_device_for_chat(chat_id: int) -> Optional[str]:
     with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT device_id FROM device_chat_links
+            WHERE chat_id = ?
+            ORDER BY linked_at DESC
+            LIMIT 1
+            """,
+            (chat_id,)
+        ).fetchone()
+        if row:
+            return row["device_id"]
+
         row = conn.execute(
             "SELECT device_id FROM links WHERE chat_id = ?", (chat_id,)
         ).fetchone()

@@ -31,6 +31,15 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,6 +67,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.*
 
 // ==================== CONFIG - CHANGE THESE ====================
@@ -98,6 +108,11 @@ data class ApplyResponse(
     @SerializedName("already_applied") val alreadyApplied: Boolean? = null
 )
 
+const val PREFS_NAME = "wallpaper_sync"
+const val PREF_DEVICE_ID = "device_id"
+const val AUTO_SYNC_WORK_NAME = "auto_wallpaper_sync"
+const val AUTO_SYNC_NOW_WORK_NAME = "auto_wallpaper_sync_now"
+
 // Minimal Retrofit service
 interface WallpaperApi {
     @GET("pending")
@@ -108,6 +123,35 @@ interface WallpaperApi {
 
     @GET("history")
     suspend fun getHistory(@Query("device_id") deviceId: String, @Query("limit") limit: Int = 10): Map<String, Any>
+}
+
+class AutoWallpaperWorker(
+    appContext: Context,
+    params: WorkerParameters
+) : CoroutineWorker(appContext, params) {
+
+    override suspend fun doWork(): Result {
+        val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val deviceId = prefs.getString(PREF_DEVICE_ID, null) ?: return Result.success()
+
+        return try {
+            val pending = ApiClient.api.getPending(deviceId).pending
+            pending.forEach { item ->
+                val bitmap = downloadBitmap(item.imageUrl) ?: return@forEach
+                applyWallpaper(applicationContext, bitmap, "both")
+                ApiClient.api.apply(
+                    ApplyRequest(
+                        deviceId = deviceId,
+                        pendingId = item.id,
+                        screen = "both"
+                    )
+                )
+            }
+            Result.success()
+        } catch (_: Exception) {
+            Result.retry()
+        }
+    }
 }
 
 // Simple client
@@ -172,15 +216,17 @@ fun WallpaperSyncScreen() {
 
     // Load or create device ID on first composition
     LaunchedEffect(Unit) {
-        val prefs = context.getSharedPreferences("wallpaper_sync", Context.MODE_PRIVATE)
-        val existing = prefs.getString("device_id", null)
-        if (existing.isNullOrBlank()) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(PREF_DEVICE_ID, null)
+        val activeDeviceId = if (existing.isNullOrBlank()) {
             val newId = UUID.randomUUID().toString()
-            prefs.edit().putString("device_id", newId).apply()
-            deviceId = newId
+            prefs.edit().putString(PREF_DEVICE_ID, newId).apply()
+            newId
         } else {
-            deviceId = existing
+            existing
         }
+        deviceId = activeDeviceId
+        scheduleAutoWallpaperSync(context)
     }
 
     val connectLink = remember(deviceId) {
@@ -198,6 +244,7 @@ fun WallpaperSyncScreen() {
     // Fetch pending wallpapers from backend
     fun syncNow() {
         val id = deviceId ?: return
+        scheduleAutoWallpaperSync(context)
         scope.launch {
             isLoading = true
             try {
@@ -205,7 +252,7 @@ fun WallpaperSyncScreen() {
                     ApiClient.api.getPending(id)
                 }
                 pendingItems = resp.pending
-                lastMessage = if (resp.pending.isEmpty()) "No new wallpapers. Send photos to the bot!" else null
+                lastMessage = if (resp.pending.isEmpty()) "No new wallpapers yet." else "Auto apply started."
             } catch (e: Exception) {
                 lastMessage = "Sync failed: ${e.message}"
                 showToast("Could not reach server. Is it running and reachable?")
@@ -225,19 +272,7 @@ fun WallpaperSyncScreen() {
                     downloadBitmap(item.imageUrl)
                 } ?: throw IOException("Failed to download image")
 
-                val wm = WallpaperManager.getInstance(context)
-
-                when (screen) {
-                    "home" -> wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
-                    "lock" -> wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
-                    else -> {
-                        // Try both (some devices support the combined flag)
-                        wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
-                        try {
-                            wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
-                        } catch (_: Exception) { /* some devices don't allow setting lock separately */ }
-                    }
-                }
+                applyWallpaper(context, bitmap, screen)
 
                 // Tell the server we applied it → bot will send confirmation in Telegram
                 withContext(Dispatchers.IO) {
@@ -295,7 +330,7 @@ fun WallpaperSyncScreen() {
         )
 
         Text(
-            "Send photos to your bot → they appear here → set them as your wallpaper",
+            "Share your link. People send photos to the bot. This phone applies them automatically.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -308,7 +343,7 @@ fun WallpaperSyncScreen() {
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(Modifier.padding(16.dp)) {
-                Text("1. Connect to Telegram", style = MaterialTheme.typography.titleMedium)
+                Text("1. Share your wallpaper link", style = MaterialTheme.typography.titleMedium)
 
                 Spacer(Modifier.height(8.dp))
 
@@ -341,10 +376,10 @@ fun WallpaperSyncScreen() {
                 if (connectLink != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { copyLink() }) {
-                            Text("Copy Link")
+                            Text("Copy Share Link")
                         }
                         Button(onClick = { openInTelegram() }) {
-                            Text("Open in Telegram")
+                            Text("Open Link")
                         }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -370,7 +405,15 @@ fun WallpaperSyncScreen() {
             shape = RoundedCornerShape(12.dp)
         ) {
             Column(Modifier.padding(16.dp)) {
-                Text("2. Get photos from the bot", style = MaterialTheme.typography.titleMedium)
+                Text("2. Auto sync is active", style = MaterialTheme.typography.titleMedium)
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    "This phone checks for new bot photos in the background and applies them to home and lock screen.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 Spacer(Modifier.height(8.dp))
 
@@ -387,7 +430,7 @@ fun WallpaperSyncScreen() {
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (isLoading) "Syncing..." else "Sync Now — Check for new wallpapers")
+                    Text(if (isLoading) "Checking..." else "Check now")
                 }
 
                 if (pendingItems.isNotEmpty()) {
@@ -401,7 +444,7 @@ fun WallpaperSyncScreen() {
 
         // Pending list
         if (pendingItems.isNotEmpty()) {
-            Text("Pending wallpapers (tap a button to apply)", style = MaterialTheme.typography.titleSmall)
+            Text("Waiting wallpapers", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
 
             LazyColumn(
@@ -424,7 +467,7 @@ fun WallpaperSyncScreen() {
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    lastMessage ?: "Send a photo to your Telegram bot, then tap Sync.",
+                    lastMessage ?: "Share your link. New bot photos will be applied automatically.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -448,7 +491,7 @@ fun WallpaperSyncScreen() {
         }
         if (showHistory) {
             Text(
-                "Tips:\n• Forward photos from anywhere to the bot\n• The bot only works with chats you linked via the connect link\n• After applying, the bot sends the image back in Telegram as confirmation\n• Large images are set as-is (add downscaling later if needed)",
+                "Tips:\n• Anyone with your share link can connect their Telegram chat\n• Connected people can send or forward photos to the bot\n• This phone applies waiting photos automatically\n• Android may delay background sync to save battery",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -531,4 +574,47 @@ suspend fun downloadBitmap(url: String): Bitmap? = withContext(Dispatchers.IO) {
         e.printStackTrace()
         null
     }
+}
+
+suspend fun applyWallpaper(context: Context, bitmap: Bitmap, screen: String) = withContext(Dispatchers.IO) {
+    val wm = WallpaperManager.getInstance(context)
+
+    when (screen) {
+        "home" -> wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+        "lock" -> wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
+        else -> {
+            wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_SYSTEM)
+            try {
+                wm.setBitmap(bitmap, null, true, WallpaperManager.FLAG_LOCK)
+            } catch (_: Exception) {
+                // Some devices do not allow apps to set the lock screen separately.
+            }
+        }
+    }
+}
+
+fun scheduleAutoWallpaperSync(context: Context) {
+    val constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.CONNECTED)
+        .build()
+
+    val periodicWork = PeriodicWorkRequestBuilder<AutoWallpaperWorker>(15, TimeUnit.MINUTES)
+        .setConstraints(constraints)
+        .build()
+
+    WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+        AUTO_SYNC_WORK_NAME,
+        ExistingPeriodicWorkPolicy.UPDATE,
+        periodicWork
+    )
+
+    val runNowWork = OneTimeWorkRequestBuilder<AutoWallpaperWorker>()
+        .setConstraints(constraints)
+        .build()
+
+    WorkManager.getInstance(context).enqueueUniqueWork(
+        AUTO_SYNC_NOW_WORK_NAME,
+        ExistingWorkPolicy.REPLACE,
+        runNowWork
+    )
 }
