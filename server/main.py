@@ -319,11 +319,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first_name = chat.first_name
 
     link_device_to_chat(device_id, chat.id, username=username, first_name=first_name)
+    bot_username = (await context.bot.get_me()).username
+    share_link = f"https://t.me/{bot_username}?start={device_id}"
 
     await update.message.reply_text(
         f"✅ Connected to this wallpaper link.\n\n"
         f"Target device: <code>{device_id}</code>\n\n"
-        "Send or forward any photo here and it will be queued for that phone to apply automatically."
+        "Send or forward any photo here and it will be queued for that phone to apply automatically.\n\n"
+        f"Share this link with anyone you want to let change this wallpaper:\n{share_link}"
     )
     logger.info(f"Linked device {device_id} <-> chat {chat.id} (@{username})")
 
