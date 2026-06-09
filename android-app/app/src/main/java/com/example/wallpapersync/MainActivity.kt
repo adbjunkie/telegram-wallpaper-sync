@@ -78,6 +78,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -302,6 +303,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FirebaseMessaging.getInstance().isAutoInitEnabled = true
         requestNotificationPermissionIfNeeded()
 
         setContent {
@@ -813,17 +815,22 @@ fun startWallpaperSyncService(context: Context) {
 
 suspend fun registerPushToken(context: Context, deviceId: String, knownToken: String? = null): String =
     withContext(Dispatchers.IO) {
-        val token = knownToken ?: Tasks.await(FirebaseMessaging.getInstance().token)
+        FirebaseMessaging.getInstance().isAutoInitEnabled = true
+        val token = knownToken ?: withTimeout(15_000L) {
+            Tasks.await(FirebaseMessaging.getInstance().token)
+        }
         if (token.isNullOrBlank()) {
             throw IOException("Firebase returned an empty token")
         }
 
-        ApiClient.api.registerPush(
-            RegisterPushRequest(
-                deviceId = deviceId,
-                fcmToken = token
+        withTimeout(15_000L) {
+            ApiClient.api.registerPush(
+                RegisterPushRequest(
+                    deviceId = deviceId,
+                    fcmToken = token
+                )
             )
-        )
+        }
 
         "Push registered: ${token.take(8)}..."
     }
