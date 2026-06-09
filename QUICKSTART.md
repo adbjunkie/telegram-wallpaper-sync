@@ -21,14 +21,14 @@ git push -u origin main
 ## 3. Deploy on Railway
 1. Go to Railway → New Project → Deploy from GitHub repo.
 2. Select this repo.
-3. **Set Root Directory = `server`** (critical).
+3. **Critical**: Set the service **Root Directory to `server`** (in the service configuration / settings when creating or editing the deployment). This ensures the Dockerfile and COPY instructions see the correct files.
 4. Variables:
    - `TELEGRAM_BOT_TOKEN` = your bot token
-   - `PUBLIC_BASE_URL` = `https://your-service.up.railway.app` (Railway shows this after deploy)
-5. Settings → Volumes → Add Volume at path `/data` (so DB and images persist).
+   - `PUBLIC_BASE_URL` = `https://your-service.up.railway.app` (Railway shows this after the first deploy)
+5. Settings → Volumes → Add a Volume mounted at path `/data` (this is required so the SQLite database and received photos survive deploys and restarts).
 6. Deploy the service.
 
-After deploy, the bot runs in webhook mode automatically.
+After the deploy succeeds, the server will start in webhook mode automatically (the code detects the https PUBLIC_BASE_URL).
 
 ## 4. Configure the Android App
 1. Open the `android/` folder contents in Android Studio (New Project → Empty Activity with Compose, then replace files).

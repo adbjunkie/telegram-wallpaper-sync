@@ -12,12 +12,12 @@ This project is built to be deployed on **Railway** from **GitHub** (webhook + p
 
 1. Push this folder to a GitHub repo.
 2. In Railway: New Project → Deploy from GitHub → select repo.
-3. **Set Root Directory to `server`** (important).
+3. **Set Root Directory to `server`** (this is critical — it changes the build context so the Dockerfile works).
 4. Add these Variables:
    - `TELEGRAM_BOT_TOKEN` = (from @BotFather)
    - `PUBLIC_BASE_URL` = `https://your-app.up.railway.app` (Railway gives you this)
-5. Add a Volume mounted at `/data` (for DB + images to survive deploys).
-6. Deploy.
+5. Add a Volume mounted at `/data` (for the database + received images to survive deploys/restarts — strongly recommended).
+6. Deploy the service.
 7. In the Android sources (`android/...`), edit two lines in `MainActivity.kt`:
    - `BOT_USERNAME`
    - `BASE_URL`
