@@ -11,8 +11,15 @@ DB_PATH = os.getenv("DB_PATH") or os.path.join(DATA_DIR, "wallpaper_sync.db")
 IMAGES_DIR = os.getenv("IMAGES_DIR") or os.path.join(DATA_DIR, "received_images")
 
 def init_db():
+    print(f"[DB] Initializing with DATA_DIR={DATA_DIR}, DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}")
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(IMAGES_DIR, exist_ok=True)
+    # Ensure writable for volume mounts (e.g. Railway). Ignore if not permitted.
+    try:
+        os.chmod(DATA_DIR, 0o777)
+        os.chmod(IMAGES_DIR, 0o777)
+    except PermissionError:
+        pass
     with get_conn() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS links (
