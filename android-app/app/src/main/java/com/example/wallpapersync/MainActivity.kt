@@ -135,18 +135,7 @@ class AutoWallpaperWorker(
         val deviceId = prefs.getString(PREF_DEVICE_ID, null) ?: return Result.success()
 
         return try {
-            val pending = ApiClient.api.getPending(deviceId).pending
-            pending.forEach { item ->
-                val bitmap = downloadBitmap(item.imageUrl) ?: return@forEach
-                applyWallpaper(applicationContext, bitmap, "both")
-                ApiClient.api.apply(
-                    ApplyRequest(
-                        deviceId = deviceId,
-                        pendingId = item.id,
-                        screen = "both"
-                    )
-                )
-            }
+            applyPendingWallpapers(applicationContext, deviceId)
             Result.success()
         } catch (_: Exception) {
             Result.retry()
@@ -244,15 +233,18 @@ fun WallpaperSyncScreen() {
     // Fetch pending wallpapers from backend
     fun syncNow() {
         val id = deviceId ?: return
-        scheduleAutoWallpaperSync(context)
         scope.launch {
             isLoading = true
             try {
-                val resp = withContext(Dispatchers.IO) {
-                    ApiClient.api.getPending(id)
+                val appliedCount = applyPendingWallpapers(context, id)
+                pendingItems = withContext(Dispatchers.IO) {
+                    ApiClient.api.getPending(id).pending
                 }
-                pendingItems = resp.pending
-                lastMessage = if (resp.pending.isEmpty()) "No new wallpapers yet." else "Auto apply started."
+                lastMessage = if (appliedCount == 0) {
+                    "No new wallpapers yet."
+                } else {
+                    "Applied $appliedCount wallpaper${if (appliedCount == 1) "" else "s"}."
+                }
             } catch (e: Exception) {
                 lastMessage = "Sync failed: ${e.message}"
                 showToast("Could not reach server. Is it running and reachable?")
@@ -591,6 +583,26 @@ suspend fun applyWallpaper(context: Context, bitmap: Bitmap, screen: String) = w
             }
         }
     }
+}
+
+suspend fun applyPendingWallpapers(context: Context, deviceId: String): Int = withContext(Dispatchers.IO) {
+    val pending = ApiClient.api.getPending(deviceId).pending
+    var appliedCount = 0
+
+    pending.forEach { item ->
+        val bitmap = downloadBitmap(item.imageUrl) ?: return@forEach
+        applyWallpaper(context, bitmap, "both")
+        ApiClient.api.apply(
+            ApplyRequest(
+                deviceId = deviceId,
+                pendingId = item.id,
+                screen = "both"
+            )
+        )
+        appliedCount += 1
+    }
+
+    appliedCount
 }
 
 fun scheduleAutoWallpaperSync(context: Context) {

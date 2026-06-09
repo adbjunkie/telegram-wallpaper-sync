@@ -153,7 +153,7 @@ def get_pending_for_device(device_id: str) -> List[Dict[str, Any]]:
             SELECT id, device_id, filename, original_file_id, chat_id, received_at, applied, screen
             FROM pending_wallpapers
             WHERE device_id = ? AND applied = 0
-            ORDER BY received_at DESC
+            ORDER BY received_at ASC, id ASC
         """, (device_id,)).fetchall()
         return [dict(r) for r in rows]
 
