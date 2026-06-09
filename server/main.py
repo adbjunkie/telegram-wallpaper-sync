@@ -270,6 +270,16 @@ async def healthz():
     return {"status": "healthy", "db": DB_PATH, "images": str(IMAGES_DIR)}
 
 
+@app.get("/push_status")
+async def push_status(device_id: str = Query(..., min_length=8)):
+    token = get_push_token(device_id)
+    return {
+        "device_id": device_id,
+        "has_fcm_token": bool(token),
+        "firebase_ready": _firebase_ready or bool(firebase_admin._apps),
+    }
+
+
 @app.post(_webhook_path)
 async def telegram_webhook(request: Request):
     """
@@ -355,6 +365,7 @@ async def register_push(req: RegisterPushRequest):
         raise HTTPException(status_code=400, detail="Invalid fcm_token")
 
     set_push_token(req.device_id, req.fcm_token)
+    logger.info(f"Registered FCM token for device {req.device_id}")
     return {"ok": True, "device_id": req.device_id}
 
 

@@ -202,6 +202,7 @@ class WallpaperSyncService : Service() {
                 val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val deviceId = prefs.getString(PREF_DEVICE_ID, null)
                 if (!deviceId.isNullOrBlank()) {
+                    registerPushToken(applicationContext, deviceId)
                     try {
                         applyPendingWallpapers(applicationContext, deviceId)
                     } catch (_: Exception) {
@@ -793,5 +794,8 @@ fun registerPushToken(context: Context, deviceId: String, knownToken: String? = 
             if (!token.isNullOrBlank()) {
                 sendToken(token)
             }
+        }
+        .addOnFailureListener {
+            scheduleAutoWallpaperSync(context.applicationContext)
         }
 }
