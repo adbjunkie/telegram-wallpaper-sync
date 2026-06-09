@@ -8,8 +8,12 @@ from contextlib import contextmanager
 # Railway-friendly configuration.
 # Set DATA_DIR=/data (and attach a Railway Volume at /data) for persistence across deploys/restarts.
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
-DB_PATH = Path(os.getenv("DB_PATH")) if os.getenv("DB_PATH") else DATA_DIR / "wallpaper_sync.db"
 IMAGES_DIR = Path(os.getenv("IMAGES_DIR")) if os.getenv("IMAGES_DIR") else DATA_DIR / "received_images"
+
+raw_db_path = os.getenv("DB_PATH")
+DB_PATH = Path(raw_db_path) if raw_db_path else DATA_DIR / "wallpaper_sync.db"
+if DB_PATH.suffix == "" or raw_db_path in {str(DATA_DIR), f"{DATA_DIR}/"}:
+    DB_PATH = DB_PATH / "wallpaper_sync.db"
 
 def init_db():
     print(f"[DB] Initializing with DATA_DIR={DATA_DIR}, DB_PATH={DB_PATH}, IMAGES_DIR={IMAGES_DIR}")
