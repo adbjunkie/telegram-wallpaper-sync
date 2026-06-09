@@ -8,6 +8,11 @@
     <!-- This is the key permission that lets us change the system wallpaper programmatically -->
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
 
+    <!-- Required for always-on no-Google auto sync. Android shows a persistent notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- Optional: if you later want to let users pick local images too -->
     <!-- <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" /> -->
 
@@ -32,6 +37,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".WallpaperSyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

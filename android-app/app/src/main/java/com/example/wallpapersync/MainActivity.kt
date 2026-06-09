@@ -20,6 +20,11 @@ package com.example.wallpapersync
  */
 
 import android.app.WallpaperManager
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -27,7 +32,9 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -60,6 +67,11 @@ import coil.request.ImageRequest
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -112,6 +124,9 @@ const val PREFS_NAME = "wallpaper_sync"
 const val PREF_DEVICE_ID = "device_id"
 const val AUTO_SYNC_WORK_NAME = "auto_wallpaper_sync"
 const val AUTO_SYNC_NOW_WORK_NAME = "auto_wallpaper_sync_now"
+const val FOREGROUND_SYNC_CHANNEL_ID = "wallpaper_sync_foreground"
+const val FOREGROUND_SYNC_NOTIFICATION_ID = 1001
+const val FOREGROUND_SYNC_INTERVAL_MS = 15_000L
 
 // Minimal Retrofit service
 interface WallpaperApi {
@@ -140,6 +155,77 @@ class AutoWallpaperWorker(
         } catch (_: Exception) {
             Result.retry()
         }
+    }
+}
+
+class WallpaperSyncService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        startForeground(FOREGROUND_SYNC_NOTIFICATION_ID, buildNotification())
+        serviceScope.launch {
+            while (isActive) {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val deviceId = prefs.getString(PREF_DEVICE_ID, null)
+                if (!deviceId.isNullOrBlank()) {
+                    try {
+                        applyPendingWallpapers(applicationContext, deviceId)
+                    } catch (_: Exception) {
+                        // Keep the service alive; the next poll can recover from network/API errors.
+                    }
+                }
+                delay(FOREGROUND_SYNC_INTERVAL_MS)
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                FOREGROUND_SYNC_CHANNEL_ID,
+                "Wallpaper Sync",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, FOREGROUND_SYNC_CHANNEL_ID)
+        } else {
+            Notification.Builder(this)
+        }
+
+        return builder
+            .setContentTitle("Wallpaper Sync active")
+            .setContentText("Watching for Telegram wallpapers")
+            .setSmallIcon(android.R.drawable.ic_menu_gallery)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
     }
 }
 
@@ -176,6 +262,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermissionIfNeeded()
 
         setContent {
             MaterialTheme {
@@ -186,6 +273,12 @@ class MainActivity : ComponentActivity() {
                     WallpaperSyncScreen()
                 }
             }
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1002)
         }
     }
 }
@@ -216,6 +309,7 @@ fun WallpaperSyncScreen() {
         }
         deviceId = activeDeviceId
         scheduleAutoWallpaperSync(context)
+        startWallpaperSyncService(context)
     }
 
     val connectLink = remember(deviceId) {
@@ -402,7 +496,7 @@ fun WallpaperSyncScreen() {
                 Spacer(Modifier.height(8.dp))
 
                 Text(
-                    "This phone checks for new bot photos in the background and applies them to home and lock screen.",
+                    "This phone keeps a small notification active, checks for bot photos, and applies them to home and lock screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -483,7 +577,7 @@ fun WallpaperSyncScreen() {
         }
         if (showHistory) {
             Text(
-                "Tips:\n• Anyone with your share link can connect their Telegram chat\n• Connected people can send or forward photos to the bot\n• This phone applies waiting photos automatically\n• Android may delay background sync to save battery",
+                "Tips:\n• Anyone with your share link can connect their Telegram chat\n• Connected people can send or forward photos to the bot\n• Keep the Wallpaper Sync notification enabled\n• Disable battery optimization if your phone pauses syncing",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -629,4 +723,13 @@ fun scheduleAutoWallpaperSync(context: Context) {
         ExistingWorkPolicy.REPLACE,
         runNowWork
     )
+}
+
+fun startWallpaperSyncService(context: Context) {
+    val intent = Intent(context, WallpaperSyncService::class.java)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        context.startForegroundService(intent)
+    } else {
+        context.startService(intent)
+    }
 }
