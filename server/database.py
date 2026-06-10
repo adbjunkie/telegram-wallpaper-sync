@@ -233,3 +233,68 @@ def get_push_token(device_id: str) -> Optional[str]:
             (device_id,)
         ).fetchone()
         return row["fcm_token"] if row else None
+
+def get_connected_users(device_id: str) -> List[Dict[str, Any]]:
+    """Return all Telegram chats linked to this device, with names."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT chat_id, username, first_name, linked_at
+            FROM device_chat_links
+            WHERE device_id = ?
+            ORDER BY linked_at DESC
+        """, (device_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+def unlink_device_from_chat(device_id: str, chat_id: int) -> bool:
+    """Remove a Telegram chat's permission to send to this device."""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM device_chat_links WHERE chat_id = ? AND device_id = ?",
+            (chat_id, device_id)
+        )
+        conn.commit()
+        return True
+
+def add_batch_pending_wallpapers(device_ids: List[str], filename: str, original_file_id: str, chat_id: int) -> List[int]:
+    """Create a pending wallpaper entry for multiple devices at once. Returns list of pending_ids."""
+    pending_ids = []
+    with get_conn() as conn:
+        for device_id in device_ids:
+            cur = conn.execute("""
+                INSERT INTO pending_wallpapers (device_id, filename, original_file_id, chat_id)
+                VALUES (?, ?, ?, ?)
+            """, (device_id, filename, original_file_id, chat_id))
+            pending_ids.append(cur.lastrowid)
+        conn.commit()
+    return pending_ids
+
+def get_connected_user_details(chat_id: int, device_id: str) -> Optional[Dict[str, Any]]:
+    """Get specific link details between a chat and device."""
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT chat_id, device_id, username, first_name, linked_at
+            FROM device_chat_links
+            WHERE chat_id = ? AND device_id = ?
+        """, (chat_id, device_id)).fetchone()
+        return dict(row) if row else None
+
+def get_all_devices_for_chat(chat_id: int) -> List[Dict[str, Any]]:
+    """Return all devices a specific chat is linked to (for the sender side)."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT device_id, username, first_name, linked_at
+            FROM device_chat_links
+            WHERE chat_id = ?
+            ORDER BY linked_at DESC
+        """, (chat_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+def add_wallpaper_upload(device_id: str, filename: str, chat_id: int) -> int:
+    """Register a wallpaper uploaded from the Android app (owner-initiated)."""
+    with get_conn() as conn:
+        cur = conn.execute("""
+            INSERT INTO pending_wallpapers (device_id, filename, original_file_id, chat_id)
+            VALUES (?, ?, ?, ?)
+        """, (device_id, filename, "direct_upload", chat_id))
+        conn.commit()
+        return cur.lastrowid

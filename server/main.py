@@ -34,6 +34,7 @@ from firebase_admin import credentials, messaging
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from telegram import Update
@@ -51,6 +52,11 @@ from database import (
     get_chat_id_for_pending,
     set_push_token,
     get_push_token,
+    get_connected_users,
+    unlink_device_from_chat,
+    add_batch_pending_wallpapers,
+    add_wallpaper_upload,
+    get_all_devices_for_chat,
     IMAGES_DIR,
     DATA_DIR,
     DB_PATH,
@@ -160,6 +166,12 @@ class ApplyRequest(BaseModel):
 class RegisterPushRequest(BaseModel):
     device_id: str
     fcm_token: str
+
+
+class BatchUploadRequest(BaseModel):
+    device_id: str
+    device_ids: list[str]
+    screen: str = "both"
 
 
 # --------------------------- FastAPI app ---------------------------
@@ -278,6 +290,137 @@ async def push_status(device_id: str = Query(..., min_length=8)):
         "has_fcm_token": bool(token),
         "firebase_ready": _firebase_ready or bool(firebase_admin._apps),
     }
+
+
+@app.get("/connected")
+async def get_connected(device_id: str = Query(..., min_length=8)):
+    """Return all Telegram users linked to this device."""
+    users = get_connected_users(device_id)
+    bot_username = (await ptb_app.bot.get_me()).username if ptb_app and ptb_app.bot else "bot"
+    return {
+        "device_id": device_id,
+        "connected": [
+            {
+                "chat_id": u["chat_id"],
+                "username": u.get("username"),
+                "first_name": u.get("first_name"),
+                "linked_at": u.get("linked_at"),
+                "avatar_url": f"https://t.me/i/userpic/320/{u['username'] or u['chat_id']}.jpg",
+                "talk_link": f"https://t.me/{bot_username}?start={device_id}",
+            }
+            for u in users
+        ],
+        "share_link": f"https://t.me/{bot_username}?start={device_id}" if bot_username else None,
+    }
+
+
+@app.post("/unlink")
+async def unlink_user(chat_id: int = Query(...), device_id: str = Query(..., min_length=8)):
+    """Remove a connected user from a device (device owner can kick people)."""
+    unlink_device_from_chat(device_id, chat_id)
+    return {"ok": True, "chat_id": chat_id, "device_id": device_id}
+
+
+@app.post("/batch_send")
+async def batch_send(device_id: str = Query(...), device_ids: str = Query(...), screen: str = Query("both")):
+    """
+    Placeholder for batch send. Real implementation requires the image file.
+    This will be extended with multipart upload from the Android app.
+    """
+    target_ids = [d.strip() for d in device_ids.split(",") if d.strip()]
+    if not target_ids:
+        raise HTTPException(status_code=400, detail="No device_ids provided")
+    return {
+        "ok": True,
+        "device_id": device_id,
+        "target_devices": target_ids,
+        "screen": screen,
+        "note": "Image upload to be implemented via multipart"
+    }
+
+
+@app.get("/landing/{device_id}")
+async def landing_page(device_id: str):
+    """Serve an HTML landing page when someone opens the deep link in a browser (not Telegram)."""
+    bot_username = (await ptb_app.bot.get_me()).username if ptb_app and ptb_app.bot else "bot"
+    share_link = f"https://t.me/{bot_username}?start={device_id}"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wallpaper Sync - Connect</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+  }}
+  .card {{
+    background: white; border-radius: 20px; padding: 40px 30px; max-width: 420px; width: 100%;
+    text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }}
+  h1 {{ font-size: 28px; margin-bottom: 8px; color: #333; }}
+  .emoji {{ font-size: 48px; margin-bottom: 16px; }}
+  p {{ color: #666; line-height: 1.6; margin-bottom: 20px; font-size: 15px; }}
+  .device-id {{
+    background: #f5f5f5; border-radius: 8px; padding: 8px 12px; font-family: monospace;
+    font-size: 12px; color: #888; margin-bottom: 20px; word-break: break-all;
+  }}
+  .btn {{
+    display: inline-block; background: #0088cc; color: white; text-decoration: none;
+    padding: 14px 32px; border-radius: 12px; font-size: 16px; font-weight: 600;
+    transition: transform 0.2s, box-shadow 0.2s; margin: 6px;
+  }}
+  .btn:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,136,204,0.4); }}
+  .btn-outline {{
+    background: white; color: #0088cc; border: 2px solid #0088cc;
+  }}
+  .steps {{ text-align: left; margin: 20px 0; }}
+  .step {{ display: flex; align-items: flex-start; margin-bottom: 12px; }}
+  .step-num {{
+    background: #667eea; color: white; border-radius: 50%; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center; font-size: 12px;
+    font-weight: bold; margin-right: 12px; flex-shrink: 0; margin-top: 2px;
+  }}
+  .step-text {{ color: #555; font-size: 14px; line-height: 1.5; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="emoji">📱</div>
+  <h1>Wallpaper Sync</h1>
+  <p>You've been invited to set someone's phone wallpaper. Open this link in Telegram to connect, then send a photo to change their wallpaper instantly.</p>
+
+  <div class="device-id">Device: {device_id[:12]}...</div>
+
+  <a href="{share_link}" class="btn">Open in Telegram</a>
+  <a href="https://t.me/{bot_username}" class="btn btn-outline">Go to Bot</a>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-text">Tap "Open in Telegram" above</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-text">Once connected, send any photo to the bot</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-text">The phone auto-applies it as wallpaper!</div>
+    </div>
+  </div>
+
+  <p style="font-size: 12px; color: #aaa; margin-top: 16px;">
+    Need Telegram? <a href="https://telegram.org/dl" style="color: #0088cc;">Download it here</a>
+  </p>
+</div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 @app.post(_webhook_path)
@@ -402,12 +545,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link_device_to_chat(device_id, chat.id, username=username, first_name=first_name)
     bot_username = (await context.bot.get_me()).username
     share_link = f"https://t.me/{bot_username}?start={device_id}"
+    landing_url = f"{PUBLIC_BASE_URL}/landing/{device_id}"
 
     await update.message.reply_text(
         f"✅ Connected to this wallpaper link.\n\n"
         f"Target device: <code>{device_id}</code>\n\n"
         "Send or forward any photo here and it will be queued for that phone to apply automatically.\n\n"
-        f"Share this link with anyone you want to let change this wallpaper:\n{share_link}"
+        f"Share this link with anyone you want to let change this wallpaper:\n{share_link}\n\n"
+        f"If they don't have Telegram, send them:\n{landing_url}"
     )
     logger.info(f"Linked device {device_id} <-> chat {chat.id} (@{username})")
 

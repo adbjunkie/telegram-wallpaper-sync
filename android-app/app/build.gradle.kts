@@ -57,6 +57,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
 
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
@@ -76,6 +77,9 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // QR code generation
+    implementation("com.google.zxing:core:3.5.3")
 
     // Explicit Kotlin stdlib to avoid "built-in declaration" errors
     implementation("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
