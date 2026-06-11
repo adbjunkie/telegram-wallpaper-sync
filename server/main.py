@@ -711,7 +711,8 @@ async def browse_categories():
             {"id": "solo", "name": "Solo", "icon": "💋"},
             {"id": "hardcore", "name": "Hardcore", "icon": "🔥"},
             {"id": "blowjob", "name": "Blowjob", "icon": "👄"},
-    ]
+        ]
+    }
 
 
 
