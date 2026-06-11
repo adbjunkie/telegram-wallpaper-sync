@@ -33,8 +33,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,6 +45,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -704,7 +711,7 @@ fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
 
     fun search(query: String, append: Boolean = false) {
         scope.launch {
-            isLoading = true
+            if (!append) isLoading = true else loadingMore = true
             try {
                 val offset = if (append) currentOffset else 0
                 val result = withContext(Dispatchers.IO) {
@@ -712,8 +719,11 @@ fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
                     else ApiClient.api.browseSearch(query = query, offset = offset, limit = 20)
                 }
                 galleries = if (append) galleries + result.galleries else result.galleries
-                currentOffset = offset + result.count
-            } catch (_: Exception) { }
+                currentOffset = offset + result.galleries.size
+            } catch (e: Exception) {
+                if (!append) galleries = emptyList()
+                Toast.makeText(context, "Search failed: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
             isLoading = false
             loadingMore = false
         }
@@ -737,7 +747,6 @@ fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
         search("")
     }
 
-    // Gallery detail view
     if (selectedGalleryUrl != null) {
         GalleryDetailView(
             gallery = selectedGallery,
@@ -760,86 +769,92 @@ fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Search wallpapers...") },
+                placeholder = { Text("Search wallpapers...", fontSize = 14.sp) },
                 singleLine = true,
+                shape = RoundedCornerShape(24.dp),
                 trailingIcon = {
                     if (searchQuery.isNotBlank()) {
-                        IconButton(onClick = { searchQuery = ""; search("") }) {
+                        IconButton(onClick = { searchQuery = ""; selectedCategory = null; search("") }) {
                             Icon(Icons.Filled.Close, contentDescription = "Clear")
                         }
                     }
                 }
             )
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { search(searchQuery) }) { Text("Go") }
+            FilledTonalButton(onClick = { search(searchQuery) }) {
+                Text("Go")
+            }
         }
 
-        // Category chips
+        // Category chips — horizontal scroll, fixed height
         if (categories.isNotEmpty()) {
-            LazyColumn {
-                item {
-                    FlowRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        categories.forEach { cat ->
-                            val isSelected = selectedCategory == cat.id
-                            androidx.compose.material3.FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    val newCat = if (isSelected) null else cat.id
-                                    selectedCategory = newCat
-                                    searchQuery = newCat ?: ""
-                                    search(newCat ?: "")
-                                },
-                                label = {
-                                    Text(
-                                        "${cat.icon} ${cat.name}",
-                                        fontSize = 12.sp
-                                    )
-                                }
-                            )
-                        }
-                    }
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(categories) { cat ->
+                    val isSelected = selectedCategory == cat.id
+                    androidx.compose.material3.FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            val newCat = if (isSelected) null else cat.id
+                            selectedCategory = newCat
+                            searchQuery = newCat ?: ""
+                            search(newCat ?: "")
+                        },
+                        label = { Text(cat.name, fontSize = 12.sp) }
+                    )
                 }
             }
         }
 
-        // Gallery grid
+        Spacer(Modifier.height(4.dp))
+
+        // Content
         if (isLoading && galleries.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
         } else if (galleries.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No wallpapers found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (selectedCategory != null) "No results for \"$selectedCategory\""
+                    else "No wallpapers found",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         } else {
-            LazyColumn(
+            // 2-column grid
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(galleries, key = { it.galleryId }) { gallery ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { loadGallery(gallery.galleryUrl) },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                     ) {
                         Box {
+                            // Use the smaller thumb to save bandwidth in grid
+                            val imgUrl = gallery.thumbSmall.ifBlank { gallery.thumbnail }
                             AsyncImage(
                                 model = ImageRequest.Builder(LocalContext.current)
-                                    .data(gallery.thumbnail)
+                                    .data(imgUrl)
                                     .crossfade(true)
                                     .build(),
                                 contentDescription = gallery.title,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(200.dp),
+                                    .aspectRatio(2f / 3f),
                                 contentScale = ContentScale.Crop
                             )
                             Box(
@@ -848,35 +863,36 @@ fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
                                     .align(Alignment.BottomCenter)
                                     .background(
                                         Brush.verticalGradient(
-                                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
+                                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
                                         )
                                     )
-                                    .padding(12.dp)
+                                    .padding(6.dp)
                             ) {
                                 Text(
-                                    gallery.title,
+                                    gallery.title.take(40),
                                     color = Color.White,
-                                    fontSize = 13.sp,
+                                    fontSize = 10.sp,
                                     maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    lineHeight = 13.sp
                                 )
                             }
                         }
                     }
                 }
 
-                // Load more
-                item {
+                // Load more at bottom
+                item(span = { GridItemSpan(2) }) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .padding(12.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         if (loadingMore) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
                         } else {
-                            OutlinedButton(onClick = {
+                            TextButton(onClick = {
                                 loadingMore = true
                                 search(searchQuery, append = true)
                             }) {

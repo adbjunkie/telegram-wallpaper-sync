@@ -660,8 +660,68 @@ async def browse_gallery(url: str = Query(...)):
 
 @app.get("/browse/popular")
 async def browse_popular(offset: int = Query(0), limit: int = Query(20)):
-    """Get popular galleries (empty search query returns popular)."""
-    return await browse_search(q="", offset=offset, limit=limit)
+    """Get popular galleries by scraping the PornPics popular page."""
+    cache_key = f"popular:{offset}:{limit}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        # PornPics popular page uses pagination like /popular/N.shtml
+        page_num = (offset // limit) + 1 if offset > 0 else 1
+        url = f"{PORNPICS_BASE}/popular/"
+        if page_num > 1:
+            url = f"{PORNPICS_BASE}/popular/{page_num}.shtml"
+
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
+                "Accept": "text/html,*/*",
+            })
+            resp.raise_for_status()
+            html = resp.text
+
+        soup = BeautifulSoup(html, "html.parser")
+        galleries = []
+
+        # Try to find gallery cards
+        for link in soup.select("a[href*='/galleries/']"):
+            href = link.get("href", "")
+            if not href or "/galleries/" not in href:
+                continue
+            # Normalize URL
+            if href.startswith("/"):
+                href = f"{PORNPICS_BASE}{href}"
+
+            img = link.find("img")
+            if img:
+                src = img.get("src") or img.get("data-src") or ""
+                alt = img.get("alt", "")
+                title = link.get("title") or alt or ""
+                gid_match = re.search(r'(\d{6,})', href)
+                gid = gid_match.group(1) if gid_match else ""
+                thumb_460 = src.replace("/300/", "/460/") if "/300/" in src else src
+
+                galleries.append({
+                    "gallery_id": gid,
+                    "title": title.strip(),
+                    "gallery_url": href,
+                    "thumbnail": thumb_460,
+                    "thumb_small": src,
+                    "height": 0,
+                })
+
+        if not galleries:
+            # Fallback: try search with a common term
+            return await browse_search(q="popular", offset=offset, limit=limit)
+
+        result = {"query": "popular", "offset": offset, "limit": limit, "count": len(galleries[:limit]), "galleries": galleries[:limit]}
+        cache_set(cache_key, result, ttl=300)
+        return result
+
+    except Exception as e:
+        logger.warning(f"Browse popular failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Popular fetch failed: {str(e)}")
 
 
 @app.get("/browse/image")
