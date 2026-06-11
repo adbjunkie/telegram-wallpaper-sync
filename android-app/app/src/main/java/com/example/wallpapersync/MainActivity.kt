@@ -13,7 +13,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.net.Uri
 import android.os.Build
@@ -39,6 +38,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -83,7 +83,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -182,6 +184,51 @@ data class ConnectedResponse(
     @SerializedName("share_link") val shareLink: String?
 )
 
+// Browse data classes
+data class BrowseGallery(
+    @SerializedName("gallery_id") val galleryId: String,
+    val title: String,
+    @SerializedName("gallery_url") val galleryUrl: String,
+    val thumbnail: String,
+    @SerializedName("thumb_small") val thumbSmall: String,
+    val height: Int
+)
+
+data class BrowseSearchResponse(
+    val query: String,
+    val offset: Int,
+    val limit: Int,
+    val count: Int,
+    val galleries: List<BrowseGallery>
+)
+
+data class BrowseImage(
+    val thumb: String,
+    val full: String,
+    val alt: String,
+    val width: Int
+)
+
+data class BrowseGalleryResponse(
+    val title: String,
+    val description: String,
+    val categories: List<String>,
+    val tags: List<String>,
+    val models: List<String>,
+    @SerializedName("image_count") val imageCount: Int,
+    val images: List<BrowseImage>
+)
+
+data class BrowseCategory(
+    val id: String,
+    val name: String,
+    val icon: String
+)
+
+data class BrowseCategoriesResponse(
+    val categories: List<BrowseCategory>
+)
+
 const val PREFS_NAME = "wallpaper_sync"
 const val PREF_DEVICE_ID = "device_id"
 const val AUTO_SYNC_WORK_NAME = "auto_wallpaper_sync"
@@ -208,6 +255,21 @@ interface WallpaperApi {
     @POST("unlink")
     suspend fun unlinkUser(@Query("device_id") deviceId: String,
                            @Query("chat_id") chatId: Long): Map<String, Any>
+
+    // Browse endpoints
+    @GET("browse/search")
+    suspend fun browseSearch(@Query("q") query: String, @Query("offset") offset: Int = 0,
+                             @Query("limit") limit: Int = 20): BrowseSearchResponse
+
+    @GET("browse/gallery")
+    suspend fun browseGallery(@Query("url") url: String): BrowseGalleryResponse
+
+    @GET("browse/categories")
+    suspend fun browseCategories(): BrowseCategoriesResponse
+
+    @GET("browse/popular")
+    suspend fun browsePopular(@Query("offset") offset: Int = 0,
+                               @Query("limit") limit: Int = 20): BrowseSearchResponse
 }
 
 class WallpaperFirebaseMessagingService : FirebaseMessagingService() {
@@ -388,7 +450,7 @@ fun WallpaperSyncApp() {
     var showUserDetail by remember { mutableStateOf<ConnectedUser?>(null) }
     var showTips by remember { mutableStateOf(false) }
 
-    val tabTitles = listOf("Share", "People", "Wallpapers")
+    val tabTitles = listOf("Browse", "Share", "People", "Wallpapers")
 
     // Init
     LaunchedEffect(Unit) {
@@ -567,9 +629,10 @@ fun WallpaperSyncApp() {
                     text = { Text(title) },
                     icon = {
                         when (index) {
-                            0 -> Icon(Icons.Outlined.Share, contentDescription = null)
-                            1 -> Icon(Icons.Outlined.Person, contentDescription = null)
-                            2 -> Icon(Icons.Outlined.Photo, contentDescription = null)
+                            0 -> Icon(Icons.Outlined.Photo, contentDescription = null)
+                            1 -> Icon(Icons.Outlined.Share, contentDescription = null)
+                            2 -> Icon(Icons.Outlined.Person, contentDescription = null)
+                            3 -> Icon(Icons.Filled.Photo, contentDescription = null)
                         }
                     }
                 )
@@ -578,8 +641,9 @@ fun WallpaperSyncApp() {
 
         // Content area
         when (selectedTabIndex) {
-            0 -> ShareTab(deviceId, connectLink, landingUrl, context)
-            1 -> PeopleTab(
+            0 -> BrowseTab(scope, context)
+            1 -> ShareTab(deviceId, connectLink, landingUrl, context)
+            2 -> PeopleTab(
                 connectedUsers, selectedUsers, isLoading,
                 onToggleSelect = { user ->
                     if (selectedUsers.contains(user.chat_id)) {
@@ -595,7 +659,7 @@ fun WallpaperSyncApp() {
                 },
                 statusMessage = statusMessage
             )
-            2 -> WallpapersTab(
+            3 -> WallpapersTab(
                 pendingItems, isLoading,
                 onApply = { item, screen -> setWallpaperAndNotify(item, screen) },
                 onRefresh = { refreshPending() },
@@ -611,6 +675,346 @@ fun WallpaperSyncApp() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BrowseTab(scope: kotlinx.coroutines.CoroutineScope, context: Context) {
+    var galleries by remember { mutableStateOf<List<BrowseGallery>>(emptyList()) }
+    var categories by remember { mutableStateOf<List<BrowseCategory>>(emptyList()) }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var currentOffset by remember { mutableIntStateOf(0) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var selectedGallery by remember { mutableStateOf<BrowseGalleryResponse?>(null) }
+    var selectedGalleryUrl by remember { mutableStateOf<String?>(null) }
+    var loadingGallery by remember { mutableStateOf(false) }
+
+    fun loadCategories() {
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { ApiClient.api.browseCategories() }
+                categories = result.categories
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun search(query: String, append: Boolean = false) {
+        scope.launch {
+            isLoading = true
+            try {
+                val offset = if (append) currentOffset else 0
+                val result = withContext(Dispatchers.IO) {
+                    if (query.isBlank()) ApiClient.api.browsePopular(offset = offset, limit = 20)
+                    else ApiClient.api.browseSearch(query = query, offset = offset, limit = 20)
+                }
+                galleries = if (append) galleries + result.galleries else result.galleries
+                currentOffset = offset + result.count
+            } catch (_: Exception) { }
+            isLoading = false
+            loadingMore = false
+        }
+    }
+
+    fun loadGallery(url: String) {
+        scope.launch {
+            loadingGallery = true
+            selectedGalleryUrl = url
+            selectedGallery = null
+            try {
+                val result = withContext(Dispatchers.IO) { ApiClient.api.browseGallery(url = url) }
+                selectedGallery = result
+            } catch (_: Exception) { }
+            loadingGallery = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        loadCategories()
+        search("")
+    }
+
+    // Gallery detail view
+    if (selectedGalleryUrl != null) {
+        GalleryDetailView(
+            gallery = selectedGallery,
+            isLoading = loadingGallery,
+            onBack = { selectedGalleryUrl = null; selectedGallery = null },
+            context = context
+        )
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Search bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.material3.OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Search wallpapers...") },
+                singleLine = true,
+                trailingIcon = {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { searchQuery = ""; search("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear")
+                        }
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(onClick = { search(searchQuery) }) { Text("Go") }
+        }
+
+        // Category chips
+        if (categories.isNotEmpty()) {
+            LazyColumn {
+                item {
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            val isSelected = selectedCategory == cat.id
+                            androidx.compose.material3.FilterChip(
+                                selected = isSelected,
+                                onClick = {
+                                    val newCat = if (isSelected) null else cat.id
+                                    selectedCategory = newCat
+                                    searchQuery = newCat ?: ""
+                                    search(newCat ?: "")
+                                },
+                                label = {
+                                    Text(
+                                        "${cat.icon} ${cat.name}",
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Gallery grid
+        if (isLoading && galleries.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else if (galleries.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No wallpapers found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                items(galleries, key = { it.galleryId }) { gallery ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { loadGallery(gallery.galleryUrl) },
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Box {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(gallery.thumbnail)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = gallery.title,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp),
+                                contentScale = ContentScale.Crop
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
+                                        )
+                                    )
+                                    .padding(12.dp)
+                            ) {
+                                Text(
+                                    gallery.title,
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Load more
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (loadingMore) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        } else {
+                            OutlinedButton(onClick = {
+                                loadingMore = true
+                                search(searchQuery, append = true)
+                            }) {
+                                Text("Load more")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun GalleryDetailView(
+    gallery: BrowseGalleryResponse?,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    context: Context
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Filled.Close, contentDescription = "Back")
+            }
+            Text(
+                gallery?.title ?: "Loading...",
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        if (isLoading || gallery == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            return
+        }
+
+        // Metadata chips
+        if (gallery.categories.isNotEmpty() || gallery.tags.isNotEmpty()) {
+            FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                gallery.categories.take(5).forEach { tag ->
+                    androidx.compose.material3.SuggestionChip(
+                        onClick = { },
+                        label = { Text(tag, fontSize = 11.sp) }
+                    )
+                }
+            }
+        }
+
+        Text(
+            "${gallery.images.size} images",
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        // Image grid
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            items(gallery.images) { image ->
+                Card(shape = RoundedCornerShape(10.dp)) {
+                    Column {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(image.full)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = image.alt,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 400.dp),
+                            contentScale = ContentScale.FillWidth
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                                        try {
+                                            val bitmap = downloadBitmap(image.full) ?: return@launch
+                                            applyWallpaper(context, bitmap, "home")
+                                        } catch (_: Exception) { }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Home", fontSize = 12.sp) }
+
+                            OutlinedButton(
+                                onClick = {
+                                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                                        try {
+                                            val bitmap = downloadBitmap(image.full) ?: return@launch
+                                            applyWallpaper(context, bitmap, "lock")
+                                        } catch (_: Exception) { }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Lock", fontSize = 12.sp) }
+
+                            Button(
+                                onClick = {
+                                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                                        try {
+                                            val bitmap = downloadBitmap(image.full) ?: return@launch
+                                            applyWallpaper(context, bitmap, "both")
+                                        } catch (_: Exception) { }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Both", fontSize = 12.sp) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1132,9 +1536,9 @@ fun generateQrCode(text: String, size: Int): Bitmap? {
         val bitMatrix = writer.encode(text, BarcodeFormat.QR_CODE, size, size)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
         val canvas = Canvas(bitmap)
-        val paint = Paint().apply { color = Color.WHITE }
+        val paint = Paint().apply { color = android.graphics.Color.WHITE }
         canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
-        paint.color = Color.BLACK
+        paint.color = android.graphics.Color.BLACK
         for (x in 0 until size) {
             for (y in 0 until size) {
                 if (bitMatrix[x, y]) {

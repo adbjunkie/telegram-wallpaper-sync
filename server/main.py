@@ -22,6 +22,8 @@ import os
 import asyncio
 import logging
 import json
+import re
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -36,6 +38,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from bs4 import BeautifulSoup
 from pydantic import BaseModel
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -520,7 +523,197 @@ async def get_history(device_id: str = Query(...), limit: int = 20):
     return {"device_id": device_id, "history": items}
 
 
-# --------------------------- Telegram Bot Handlers ---------------------------
+# --------------------------- PornPics Proxy ---------------------------
+
+PORNPICS_BASE = "https://www.pornpics.com"
+PORNPICS_CDN = "https://cdni.pornpics.com"
+
+# Simple in-memory cache: {key: (data, expiry_timestamp)}
+_cache = {}
+
+def cache_get(key: str) -> Optional[dict]:
+    entry = _cache.get(key)
+    if entry and entry[1] > time.time():
+        return entry[0]
+    return None
+
+def cache_set(key: str, data: dict, ttl: int = 300):
+    _cache[key] = (data, time.time() + ttl)
+
+async def _fetch_pornpics_gallery_images(gallery_url: str) -> dict:
+    """Scrape a PornPics gallery page for all images + metadata."""
+    cached = cache_get(gallery_url)
+    if cached:
+        return cached
+
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(gallery_url, headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
+                "Accept": "text/html,*/*",
+            })
+            resp.raise_for_status()
+            html = resp.text
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        title = soup.find("h1").text.strip() if soup.find("h1") else ""
+        desc_match = re.search(r'"description":\s*"([^"]+)"', html)
+        description = desc_match.group(1) if desc_match else title
+
+        # Extract categories
+        categories = []
+        cat_container = soup.select_one(".gallery-info .tags:nth-of-type(3) a span, #content .gallery-info .tags a[href*='/categories/'] span")
+        if not cat_container:
+            cat_links = soup.select("a[href*='/categories/'] span")
+            categories = list(set(c.text.strip() for c in cat_links if c.text.strip()))
+
+        # Extract tags
+        tags = []
+        tag_links = soup.select("a[href*='/tags/'] span")
+        tags = list(set(t.text.strip() for t in tag_links if t.text.strip()))
+
+        # Extract models
+        models = []
+        model_links = soup.select("a[href*='/pornstars/'] span")
+        models = list(set(m.text.strip() for m in model_links if m.text.strip()))
+
+        # Extract image URLs from the tiles
+        images = []
+        tiles = soup.select("#tiles .thumbwook img")
+        if not tiles:
+            tiles = soup.select(".thumbwook img[data-src]")
+
+        for img in tiles:
+            src = img.get("data-src") or img.get("src") or ""
+            if src and "pornpics.com" in src:
+                thumb = src.strip()
+                full = thumb.replace("/460/", "/1280/")
+                alt = img.get("alt", "")
+                images.append({"thumb": thumb, "full": full, "alt": alt, "width": 1280})
+
+        if not images:
+            # Fallback: try regex from inline JS or script tags
+            js_pattern = re.findall(r'"(https://cdni\.pornpics\.com/[^"]+\.jpg)"', html)
+            for url in set(js_pattern):
+                full = url.replace("/460/", "/1280/")
+                images.append({"thumb": url, "full": full, "alt": "", "width": 1280})
+
+        result = {
+            "title": title or description,
+            "description": description,
+            "categories": categories,
+            "tags": tags,
+            "models": models,
+            "image_count": len(images),
+            "images": images,
+        }
+        cache_set(gallery_url, result, ttl=600)
+        return result
+
+    except Exception as e:
+        logger.warning(f"Failed to scrape gallery {gallery_url}: {e}")
+        return {"title": "", "categories": [], "tags": [], "models": [], "image_count": 0, "images": []}
+
+
+@app.get("/browse/search")
+async def browse_search(q: str = Query(...), offset: int = Query(0), limit: int = Query(20)):
+    """Search PornPics galleries (proxied)."""
+    cache_key = f"search:{q}:{offset}:{limit}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        url = f"{PORNPICS_BASE}/search/srch.php"
+        params = {"q": q, "offset": offset, "limit": limit, "lang": "en"}
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url, params=params, headers={"Accept": "application/json"})
+            resp.raise_for_status()
+            data = resp.json()
+
+        galleries = []
+        for item in data:
+            galleries.append({
+                "gallery_id": item.get("gid", ""),
+                "title": item.get("desc", ""),
+                "gallery_url": item.get("g_url", ""),
+                "thumbnail": item.get("t_url_460") or item.get("t_url", ""),
+                "thumb_small": item.get("t_url", ""),
+                "height": item.get("h", 0),
+            })
+
+        result = {"query": q, "offset": offset, "limit": limit, "count": len(galleries), "galleries": galleries}
+        cache_set(cache_key, result, ttl=120)
+        return result
+
+    except Exception as e:
+        logger.warning(f"Browse search failed: {e}")
+        raise HTTPException(status_code=502, detail=f"PornPics search failed: {str(e)}")
+
+
+@app.get("/browse/gallery")
+async def browse_gallery(url: str = Query(...)):
+    """Get all images and metadata for a PornPics gallery."""
+    return await _fetch_pornpics_gallery_images(url)
+
+
+@app.get("/browse/popular")
+async def browse_popular(offset: int = Query(0), limit: int = Query(20)):
+    """Get popular galleries (empty search query returns popular)."""
+    return await browse_search(q="", offset=offset, limit=limit)
+
+
+@app.get("/browse/image")
+async def browse_image_proxy(url: str = Query(...)):
+    """Proxy a PornPics image through your server (avoids CDN hotlinking issues)."""
+    cache_key = f"img:{url}"
+    cached = cache_get(cache_key)
+    if cached:
+        from fastapi.responses import Response
+        return Response(content=cached["body"], media_type=cached["content_type"])
+
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            resp = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.pornpics.com/",
+            })
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            cache_set(cache_key, {"body": resp.content, "content_type": content_type}, ttl=3600)
+            from fastapi.responses import Response
+            return Response(content=resp.content, media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Image proxy failed: {str(e)}")
+
+
+@app.get("/browse/categories")
+async def browse_categories():
+    """Return popular search categories for the browser."""
+    return {
+        "categories": [
+            {"id": "milf", "name": "MILF", "icon": "👩"},
+            {"id": "teen", "name": "Teen", "icon": "🌸"},
+            {"id": "blonde", "name": "Blonde", "icon": "👱"},
+            {"id": "brunette", "name": "Brunette", "icon": "👩‍🦰"},
+            {"id": "asian", "name": "Asian", "icon": "🎎"},
+            {"id": "latina", "name": "Latina", "icon": "💃"},
+            {"id": "ebony", "name": "Ebony", "icon": "👩🏿"},
+            {"id": "redhead", "name": "Redhead", "icon": "👩‍🦰"},
+            {"id": "big tits", "name": "Big Tits", "icon": "🍒"},
+            {"id": "big ass", "name": "Big Ass", "icon": "🍑"},
+            {"id": "lingerie", "name": "Lingerie", "icon": "👙"},
+            {"id": "outdoor", "name": "Outdoor", "icon": "🌳"},
+            {"id": "pov", "name": "POV", "icon": "👁️"},
+            {"id": "anal", "name": "Anal", "icon": "🎯"},
+            {"id": "lesbian", "name": "Lesbian", "icon": "👩‍❤️‍👩"},
+            {"id": "solo", "name": "Solo", "icon": "💋"},
+            {"id": "hardcore", "name": "Hardcore", "icon": "🔥"},
+            {"id": "blowjob", "name": "Blowjob", "icon": "👄"},
+    ]
+
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start and the deep link parameter."""
